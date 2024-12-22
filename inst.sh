@@ -21,6 +21,10 @@ sudo cat > /usr/local/etc/xray/config.json << 'EOL'
     "settings": {
       "auth": "noauth",
       "udp": true
+    },
+    "sniffing": {
+      "enabled": true,
+      "destOverride": ["http", "tls"]
     }
   }],
   "outbounds": [{
@@ -51,9 +55,13 @@ sudo cat > /usr/local/etc/xray/config.json << 'EOL'
 }
 EOL
 
+# Настройка прав доступа для XRay
+sudo chown -R nobody:nogroup /usr/local/etc/xray/
+sudo chmod 644 /usr/local/etc/xray/config.json
+
 # Настройка автозапуска XRay
 sudo systemctl enable xray
-sudo systemctl start xray
+sudo systemctl restart xray
 
 # Настройка DNS
 sudo cat > /etc/NetworkManager/conf.d/dns.conf << EOL
@@ -66,11 +74,12 @@ sudo cat > /etc/dnsmasq.conf << EOL
 interface=wlan0
 dhcp-range=192.168.4.2,192.168.4.100,255.255.255.0,24h
 dhcp-option=option:router,192.168.4.1
-dhcp-option=option:dns-server,8.8.8.8,8.8.4.4
+dhcp-option=option:dns-server,192.168.4.1
+listen-address=127.0.0.1,192.168.4.1
+bind-interfaces
+no-resolv
 server=8.8.8.8
 server=8.8.4.4
-no-resolv
-no-poll
 EOL
 
 # Разблокировка WiFi
@@ -112,14 +121,22 @@ sudo iptables -P INPUT ACCEPT
 sudo iptables -P FORWARD ACCEPT
 sudo iptables -P OUTPUT ACCEPT
 
+# Разрешаем локальные соединения
+sudo iptables -A INPUT -i lo -j ACCEPT
+sudo iptables -A OUTPUT -o lo -j ACCEPT
+
 # Разрешаем SSH и установленные соединения
 sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 sudo iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
+# Разрешаем порт XRay
+sudo iptables -A INPUT -p tcp --dport 1080 -j ACCEPT
+sudo iptables -A INPUT -p udp --dport 1080 -j ACCEPT
+
 # Настройка NAT для WiFi клиентов
 sudo iptables -t nat -A POSTROUTING -s 192.168.4.0/24 ! -d 192.168.4.0/24 -j MASQUERADE
 
-# Настройка перенаправления через прокси только для WiFi клиентов
+# Настройка перенаправления через прокси
 sudo iptables -t nat -N REDSOCKS
 sudo iptables -t nat -A REDSOCKS -d 0.0.0.0/8 -j RETURN
 sudo iptables -t nat -A REDSOCKS -d 127.0.0.0/8 -j RETURN
@@ -130,7 +147,7 @@ sudo iptables -t nat -A REDSOCKS -d 224.0.0.0/4 -j RETURN
 sudo iptables -t nat -A REDSOCKS -d 240.0.0.0/4 -j RETURN
 sudo iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports 1080
 
-# Применяем REDSOCKS только к трафику от WiFi клиентов
+# Применяем REDSOCKS к трафику от WiFi клиентов
 sudo iptables -t nat -A PREROUTING -s 192.168.4.0/24 -p tcp -j REDSOCKS
 
 # Разрешаем DNS запросы
@@ -145,6 +162,7 @@ sudo netfilter-persistent save
 # Перезапуск сервисов
 sudo systemctl restart NetworkManager
 sudo systemctl restart dnsmasq
+sudo systemctl restart xray
 
 # Создание скрипта автозапуска
 sudo cat > /etc/systemd/system/vpn-router.service << EOL
@@ -185,6 +203,10 @@ echo -e "\n=== Connected Clients ==="
 arp -a | grep wlan0
 echo -e "\n=== DNS Settings ==="
 cat /etc/resolv.conf
+echo -e "\n=== XRay Port Status ==="
+netstat -tulpn | grep 1080
+echo -e "\n=== IPTables Rules ==="
+sudo iptables -t nat -L REDSOCKS
 EOL
 
 sudo chmod +x /usr/local/bin/check-vpn-status
