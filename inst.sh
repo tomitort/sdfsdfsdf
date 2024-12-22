@@ -2,9 +2,10 @@
 
 # Установка необходимых пакетов
 sudo apt update
-sudo apt install -y curl network-manager iptables-persistent rfkill
+sudo apt install -y curl network-manager iptables-persistent rfkill dnsmasq
 
 # Остановка существующих соединений
+sudo systemctl stop dnsmasq
 sudo nmcli con down "wifi-hotspot" 2>/dev/null
 sudo nmcli con delete "wifi-hotspot" 2>/dev/null
 
@@ -57,7 +58,19 @@ sudo systemctl start xray
 # Настройка DNS
 sudo cat > /etc/NetworkManager/conf.d/dns.conf << EOL
 [main]
-dns=default
+dns=dnsmasq
+EOL
+
+# Настройка dnsmasq
+sudo cat > /etc/dnsmasq.conf << EOL
+interface=wlan0
+dhcp-range=192.168.4.2,192.168.4.100,255.255.255.0,24h
+dhcp-option=option:router,192.168.4.1
+dhcp-option=option:dns-server,8.8.8.8,8.8.4.4
+server=8.8.8.8
+server=8.8.4.4
+no-resolv
+no-poll
 EOL
 
 # Разблокировка WiFi
@@ -72,8 +85,9 @@ sudo nmcli con add \
     autoconnect yes \
     ssid "Tp-Link 24-251-26" \
     mode ap \
-    ipv4.method shared \
+    ipv4.method manual \
     ipv4.addresses "192.168.4.1/24" \
+    ipv4.never-default true \
     wifi-sec.key-mgmt wpa-psk \
     wifi-sec.proto rsn \
     wifi-sec.pairwise ccmp \
@@ -119,8 +133,18 @@ sudo iptables -t nat -A REDSOCKS -p tcp -j REDIRECT --to-ports 1080
 # Применяем REDSOCKS только к трафику от WiFi клиентов
 sudo iptables -t nat -A PREROUTING -s 192.168.4.0/24 -p tcp -j REDSOCKS
 
+# Разрешаем DNS запросы
+sudo iptables -A INPUT -p udp --dport 53 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 53 -j ACCEPT
+sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+
 # Сохранение правил iptables
 sudo netfilter-persistent save
+
+# Перезапуск сервисов
+sudo systemctl restart NetworkManager
+sudo systemctl restart dnsmasq
 
 # Создание скрипта автозапуска
 sudo cat > /etc/systemd/system/vpn-router.service << EOL
@@ -141,6 +165,7 @@ EOL
 
 # Включение автозапуска
 sudo systemctl enable vpn-router.service
+sudo systemctl enable dnsmasq
 
 # Активация точки доступа
 sudo nmcli con up "wifi-hotspot"
@@ -154,8 +179,12 @@ echo -e "\n=== WiFi Hotspot Status ==="
 nmcli con show "wifi-hotspot" | grep -E "GENERAL.STATE|IP4.ADDRESS"
 echo -e "\n=== XRay Status ==="
 systemctl status xray | grep Active
+echo -e "\n=== DNSMasq Status ==="
+systemctl status dnsmasq | grep Active
 echo -e "\n=== Connected Clients ==="
 arp -a | grep wlan0
+echo -e "\n=== DNS Settings ==="
+cat /etc/resolv.conf
 EOL
 
 sudo chmod +x /usr/local/bin/check-vpn-status
