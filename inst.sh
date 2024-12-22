@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Остановка и отключение systemd-resolved
+sudo systemctl stop systemd-resolved
+sudo systemctl disable systemd-resolved
+
+# Удаление старого resolv.conf и создание нового
+sudo rm /etc/resolv.conf
+sudo cat > /etc/resolv.conf << EOL
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOL
+
 # Установка необходимых пакетов
 sudo apt update
 sudo apt install -y curl network-manager iptables-persistent rfkill dnsmasq
@@ -63,21 +74,22 @@ sudo chmod 644 /usr/local/etc/xray/config.json
 sudo systemctl enable xray
 sudo systemctl restart xray
 
-# Настройка DNS
+# Настройка NetworkManager для использования dnsmasq
 sudo cat > /etc/NetworkManager/conf.d/dns.conf << EOL
 [main]
-dns=dnsmasq
+dns=none
 EOL
 
 # Настройка dnsmasq
+sudo mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
 sudo cat > /etc/dnsmasq.conf << EOL
 interface=wlan0
+bind-interfaces
+domain-needed
+bogus-priv
 dhcp-range=192.168.4.2,192.168.4.100,255.255.255.0,24h
 dhcp-option=option:router,192.168.4.1
-dhcp-option=option:dns-server,192.168.4.1
-listen-address=127.0.0.1,192.168.4.1
-bind-interfaces
-no-resolv
+dhcp-option=option:dns-server,8.8.8.8,8.8.4.4
 server=8.8.8.8
 server=8.8.4.4
 EOL
